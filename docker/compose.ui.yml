@@ -1,0 +1,31 @@
+# Customer-facing Next.js UI (M6). Profile: ui. Runs on 127.0.0.1:3002 so it coexists with
+# the Open WebUI demo (:3000) and Langfuse (:3001). The Next.js route handlers proxy to `app`.
+#
+#   docker compose -f docker/compose.yml --profile core,ai,ui up -d
+#   open http://127.0.0.1:3002
+#
+# Without CLERK_* env set, the UI queries LOCAL_DEV_TENANT (acme) via the backend no-auth path.
+services:
+  ui:
+    build:
+      context: ../ui
+      dockerfile: ../docker/Dockerfile.ui
+    profiles: ["ui"]
+    restart: unless-stopped
+    networks: [mlops-net]
+    ports: ["127.0.0.1:3002:3000"]
+    environment:
+      TZ: UTC
+      BACKEND_URL: http://app:8000
+      LOCAL_DEV_TENANT: ${LOCAL_DEV_TENANT:-acme}
+      # Clerk (optional). When unset, the UI runs in no-auth mode against the backend.
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:-}
+      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY:-}
+    depends_on:
+      app: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s

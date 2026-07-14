@@ -23,8 +23,14 @@ def get_engine():
     return _engine
 
 
+def get_sessionmaker() -> async_sessionmaker[AsyncSession]:
+    """Ensure the engine/sessionmaker are initialized, return the sessionmaker."""
+    get_engine()
+    return _sessionmaker
+
+
 async def get_session() -> AsyncSession:  # FastAPI dependency (used via Depends in M6+)
-    sm = _sessionmaker
+    sm = get_sessionmaker()
     async with sm() as session:
         yield session
 
@@ -32,7 +38,7 @@ async def get_session() -> AsyncSession:  # FastAPI dependency (used via Depends
 @asynccontextmanager
 async def session_context() -> AsyncIterator[AsyncSession]:
     """Use this outside of FastAPI Depends (e.g. in the /chat handler)."""
-    sm = _sessionmaker
+    sm = get_sessionmaker()
     async with sm() as session:
         yield session
 

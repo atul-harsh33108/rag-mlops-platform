@@ -74,3 +74,31 @@ app:
     minReplicas: 2
     maxReplicas: 6
     cpuAverageUtilization: 70
+
+# --- the customer-facing UI (local subchart charts/ui, M6) ---
+# Gated by `ui.enabled`. When false, the subchart isn't rendered (helm `condition`). The UI
+# proxies to the app via ui.backendUrl; Clerk keys are demo-only here — use External Secrets
+# in prod (M5/M6 prod runbook).
+ui:
+  enabled: false
+  image:
+    repository: ghcr.io/<org>/mlops-ui    # set to your GHCR repo; for local k3d side-load: mlops/ui
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  replicaCount: 2
+  backendUrl: http://mlops-app:8000        # umbrella fullname `mlops` + `-app` service
+  clerkPublishableKey: ""                 # NEXT_PUBLIC_* (non-secret); set for auth
+  clerkSecretKey: ""                      # server-only; External Secrets in prod
+  localDevTenant: acme
+  resources:
+    requests: {cpu: "100m", memory: "256Mi"}
+    limits: {cpu: "500m", memory: "512Mi"}
+  ingress:
+    enabled: false
+    className: nginx
+    host: ui.local
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 6
+    cpuAverageUtilization: 70

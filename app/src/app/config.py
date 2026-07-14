@@ -52,9 +52,15 @@ class Settings(BaseSettings):
     rerank_top_k: int = 8  # final context size
     corpus_version: int = 1  # overridden from DB at runtime; env is the fallback
 
-    # Auth (M6) — present but unused until M6
+    # Auth (M6) — Clerk (demo) / Keycloak (self-host). When CLERK_JWKS_URL is unset, auth
+    # is disabled and /chat falls back to the body `tenant` (M1 mode, used by evals/seed).
     jwt_issuer: str | None = None
     jwt_audience: str = "rag-platform"
+    clerk_jwks_url: str | None = None
+    clerk_authorized_parties: str = ""  # comma-separated allowed `azp` origins
+    auth_enabled: bool = False  # True in prod (M6+) to enforce JWT/API-key
+    rate_limit_enabled: bool = True
+    rate_limit_per_minute: int = 60  # per tenant; per-plan override at M7
 
     # Observability (M1 minimal stubs; full at M2)
     langfuse_host: str | None = None

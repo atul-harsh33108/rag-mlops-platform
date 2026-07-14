@@ -1,0 +1,54 @@
+@import "tailwindcss";
+
+/* Tailwind v4 CSS-first config. The platform palette: neutral zinc base + an indigo
+ * accent, tuned for long reading sessions of RAG answers with citations. */
+@theme {
+  --color-bg: oklch(0.99 0.002 250);
+  --color-surface: oklch(1 0 0);
+  --color-border: oklch(0.92 0.004 250);
+  --color-accent: oklch(0.55 0.18 277);
+  --color-accent-fg: oklch(0.98 0.01 277);
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--color-bg);
+  color: oklch(0.2 0.01 250);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Markdown prose inside assistant messages. */
+.prose-rag :where(p, ul, ol, li) {
+  margin-block: 0.5em;
+  line-height: 1.65;
+}
+.prose-rag :where(ul, ol) {
+  padding-inline-start: 1.25rem;
+}
+.prose-rag :where(pre) {
+  background: oklch(0.17 0.01 250);
+  color: oklch(0.95 0.005 250);
+  border-radius: 0.5rem;
+  padding: 0.75rem 1rem;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+}
+.prose-rag :where(code):not(pre code) {
+  background: oklch(0.95 0.005 250);
+  padding: 0.1em 0.3em;
+  border-radius: 0.25rem;
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+}
+.prose-rag :where(a) {
+  color: var(--color-accent);
+  text-decoration: underline;
+}

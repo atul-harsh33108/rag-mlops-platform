@@ -59,16 +59,18 @@ jobs:
     runs-on: ubuntu-22.04
     strategy:
       matrix:
-        target: [app, pipelines]
+        target: [app, pipelines, ui]
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
       - name: Build image
         uses: docker/build-push-action@v6
         with:
-          # app: context=app/ (Dockerfile.app copies pyproject + src). pipelines: context=.
-          # (Dockerfile.pipelines copies the pipelines/ package from repo root).
-          context: ${{ matrix.target == 'app' && 'app' || '.' }}
+          # app/ui: context is that package dir (Dockerfile copies it). pipelines: context=.
+          # (Dockerfile.pipelines copies the pipelines/ package from repo root). The UI build
+          # needs no Clerk secrets at build time — Clerk keys are runtime env (NEXT_PUBLIC_*
+          # can be passed as build-args via `with: build-args:` when wiring prod Clerk later).
+          context: ${{ matrix.target == 'pipelines' && '.' || matrix.target }}
           file: docker/Dockerfile.${{ matrix.target }}
           tags: ghcr.io/${{ github.repository }}/${{ matrix.target }}:sha-${{ github.sha }}
           load: true

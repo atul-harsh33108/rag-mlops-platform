@@ -29,6 +29,10 @@ dependencies = [
     # MLflow Prompt Registry (M3): load system prompt by alias. Heavy dep; the import
     # is guarded in prompt_loader.py so local dev without MLflow still works.
     "mlflow[genai]>=3.14",
+    # Auth + rate limiting (M6): Clerk/Keycloak JWT verify + per-key/per-tenant limits.
+    "pyjwt>=2.9",
+    "cryptography>=43.0",
+    "slowapi>=0.1.10",
 ]
 
 [project.optional-dependencies]
@@ -53,6 +57,9 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
+# B008: FastAPI's idiomatic `param: T = Depends(...)` default-argument pattern is a
+# deliberate false positive — the modern `Annotated[T, Depends(...)]` form is equivalent.
+ignore = ["B008"]
 
 [tool.ruff.lint.per-file-ignores]
 # seed_corpus.py is data — long string literals are intentional.

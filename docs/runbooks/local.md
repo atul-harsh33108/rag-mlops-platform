@@ -45,6 +45,14 @@ curl -N http://127.0.0.1:8000/chat -H 'Content-Type: application/json' \
 # UI:   http://127.0.0.1:3000   Open WebUI
 # Docs: http://127.0.0.1:8000/docs
 
+# M6 — customer-facing Next.js UI (Clerk auth, AI SDK useChat, citations):
+task ui:install                 # npm install (once)
+task dev:up core,ai,ui         # adds the Next.js UI on :3002
+# UI:   http://127.0.0.1:3002
+# Without CLERK_* env, the UI queries the `acme` tenant (LOCAL_DEV_TENANT) via the backend
+# no-auth path. To enable Clerk: set NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY + CLERK_SECRET_KEY
+# in .env, then sign in and switch Organization (= tenant) from the header.
+
 # M3 — gateway + orchestration (add gateway + orch profiles):
 task dev:up core,ai,gateway,mlops,orch
 task prompt:register         # register rag_system.md -> MLflow Prompt Registry @production
@@ -67,6 +75,7 @@ task dev:down
 |---|---|
 | 3000 | Open WebUI (demo chat) |
 | 3001 | Langfuse web (M2) |
+| 3002 | Next.js customer UI (M6) |
 | 4000 | LiteLLM proxy UI (M3) |
 | 5000 | MLflow (M2) |
 | 6333 | Qdrant |

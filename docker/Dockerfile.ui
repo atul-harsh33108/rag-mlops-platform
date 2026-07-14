@@ -1,0 +1,50 @@
+# syntax=docker/dockerfile:1.7
+# Multi-stage Next.js 16 standalone build. Build context MUST be the ui/ directory
+# (the app + helm charts build with their own contexts — see .github/workflows/ci.yml).
+#
+#   docker build -f docker/Dockerfile.ui -t mlops/ui:0.1.0 ui/
+#
+ARG NODE_IMAGE=node:22-alpine
+
+# ---- deps ----
+FROM ${NODE_IMAGE} AS deps
+WORKDIR /app
+# npm ci needs package-lock.json; if absent on first build, fall back to npm install below.
+COPY package.json ./
+COPY package-lock.json* ./
+RUN if [ -f package-lock.json ]; then npm ci; else npm install --no-audit --no-fund; fi
+
+# ---- build ----
+FROM ${NODE_IMAGE} AS builder
+WORKDIR /app
+ENV NEXT_TELEMETRY_DISABLED=1
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+# All Clerk + backend secrets are runtime env, not build-time. NEXT_PUBLIC_* keys ARE needed
+# at build time (they're inlined into the client bundle) — pass them via build args in CI.
+ARG NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+ARG NEXT_PUBLIC_CLERK_SIGN_IN_URL=/sign-in
+ARG NEXT_PUBLIC_CLERK_SIGN_UP_URL=/sign-up
+ENV NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY \
+    NEXT_PUBLIC_CLERK_SIGN_IN_URL=$NEXT_PUBLIC_CLERK_SIGN_IN_URL \
+    NEXT_PUBLIC_CLERK_SIGN_UP_URL=$NEXT_PUBLIC_CLERK_SIGN_UP_URL
+RUN npm run build
+
+# ---- runner ----
+FROM ${NODE_IMAGE} AS runner
+WORKDIR /app
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1 \
+    PORT=3000 \
+    HOSTNAME=0.0.0.0
+# Non-root user
+RUN addgroup -g 1001 -S nodejs && adduser -S nextjs -u 1001 -G nodejs
+# Standalone server + static assets only (no node_modules, no source).
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+COPY --from=builder --chown=nextjs:nodejs /app/public ./public
+USER nextjs
+EXPOSE 3000
+HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
+  CMD wget -qO- http://127.0.0.1:3000/ >/dev/null 2>&1 || exit 1
+CMD ["node", "server.js"]

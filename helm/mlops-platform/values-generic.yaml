@@ -38,3 +38,34 @@ app:
     minReplicas: 2
     maxReplicas: 10
     cpuAverageUtilization: 70
+
+# Customer-facing UI (M6). Cloud-agnostic: ingress-nginx + cert-manager + Let's Encrypt.
+# Clerk keys come from External Secrets (set clerkPublishableKey/clerkSecretKey here only for
+# a non-prod dry run). The UI proxies to the app via the in-cluster service.
+ui:
+  enabled: true
+  image:
+    repository: ghcr.io/<org>/mlops-ui
+    tag: "0.1.0"
+    pullPolicy: Always
+  replicaCount: 2
+  backendUrl: http://mlops-app:8000
+  clerkPublishableKey: ""           # set via External Secrets in prod (NEXT_PUBLIC_*, non-secret)
+  clerkSecretKey: ""                 # server-only; External Secrets in prod
+  localDevTenant: acme
+  resources:
+    requests: {cpu: "100m", memory: "256Mi"}
+    limits: {cpu: "500m", memory: "512Mi"}
+  ingress:
+    enabled: true
+    className: nginx
+    host: ui.example.com
+    tls: true                         # cert-manager issues Let's Encrypt cert
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt-prod
+      nginx.ingress.kubernetes.io/proxy-body-size: "2m"
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    cpuAverageUtilization: 70

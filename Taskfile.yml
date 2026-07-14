@@ -55,6 +55,37 @@ tasks:
     cmds:
       - uv run pytest -q
 
+  # ----- ui (M6) -----
+  ui:install:
+    desc: Install UI npm deps (Next.js 16 + AI SDK 7 + Clerk)
+    dir: ui
+    cmds:
+      - npm install
+
+  ui:dev:
+    desc: Run the Next.js UI in dev mode (http://localhost:3000; needs app on :8000)
+    dir: ui
+    cmds:
+      - npm run dev
+
+  ui:build:
+    desc: Production-build the Next.js UI (standalone output)
+    dir: ui
+    cmds:
+      - npm run build
+
+  ui:typecheck:
+    desc: TypeScript check the UI (no emit)
+    dir: ui
+    cmds:
+      - npm run typecheck
+
+  k3d:load-ui:
+    desc: Build the UI image + side-load it into the k3d registry (mlops/ui:0.1.0)
+    cmds:
+      - docker build -f docker/Dockerfile.ui -t mlops/ui:0.1.0 ui
+      - k3d image import mlops/ui:0.1.0 -c mlops-dev
+
   # ----- data / seed -----
   seed:
     desc: Seed ~500 support_faq + product_docs into Qdrant

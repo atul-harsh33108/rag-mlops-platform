@@ -64,3 +64,24 @@ app:
     enabled: false
   autoscaling:
     enabled: false
+
+# Local K8s UI — side-loaded image, one replica, no Clerk (queries the `acme` tenant via the
+# backend no-auth path). Build + side-load with `task k3d:load-ui`.
+ui:
+  enabled: true
+  image:
+    repository: mlops/ui            # side-loaded into k3d via `task k3d:load-ui`
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  backendUrl: http://mlops-app:8000
+  clerkPublishableKey: ""           # unset → UI uses LOCAL_DEV_TENANT (acme) no-auth path
+  clerkSecretKey: ""
+  localDevTenant: acme
+  resources:
+    requests: {cpu: "100m", memory: "256Mi"}
+    limits: {cpu: "500m", memory: "512Mi"}
+  ingress:
+    enabled: false
+  autoscaling:
+    enabled: false

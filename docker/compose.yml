@@ -13,6 +13,7 @@ include:
   - path: compose.mlops.yml
   - path: compose.orchestration.yml
   - path: compose.observability.yml
+  - path: compose.ui.yml
 
 networks:
   mlops-net:
