@@ -1,0 +1,10 @@
+output "cluster_name"     { value = module.eks.cluster_name }
+output "cluster_endpoint" { value = module.eks.cluster_endpoint }
+output "oidc_provider"     { value = module.eks.oidc_provider }
+output "ecr_repository_urls" { value = module.ecr.repository_urls }
+output "ci_deploy_role_arn" { value = aws_iam_role.ci_deploy.arn }
+output "app_irsa_role_arn"  { value = module.app_irsa.role_arn }
+output "vllm_irsa_role_arn" { value = module.vllm_irsa.role_arn }
+output "rds_endpoint"       { value = module.rds.db_instance_address }
+output "db_secret_name"     { value = module.rds.db_secret_name }
+output "models_bucket"      { value = module.s3.models_bucket }

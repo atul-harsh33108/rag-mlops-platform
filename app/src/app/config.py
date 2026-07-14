@@ -62,6 +62,23 @@ class Settings(BaseSettings):
     rate_limit_enabled: bool = True
     rate_limit_per_minute: int = 60  # per tenant; per-plan override at M7
 
+    # --- Billing + metering + sampled evals (M7) ---
+    # Lago (open-source billing) — LiteLLM's `lago` success_callback reports spend as a
+    # billable metric; we also create customers/subscriptions here. All optional/guarded.
+    lago_api_base: str | None = None  # e.g. https://api.lago.dev/api/v1
+    lago_api_key: str | None = None
+    lago_webhook_host: str | None = None  # LiteLLM needs this to receive Lago webhooks
+    lago_billable_metric_code: str = "llm-spend"  # the billable metric units = spend_usd
+    # Stripe — webhook updates tenant plan + budget on subscription events.
+    stripe_secret_key: str | None = None
+    stripe_webhook_secret: str | None = None
+    # Clerk — webhook syncs Clerk org -> tenant row (group_id = org id).
+    clerk_webhook_secret: str | None = None
+    # Production-sampled eval: fraction of /chat traffic judged for regression alerting.
+    eval_sample_rate: float = 0.05
+    # Judge model name (routed via LiteLLM `judge`). Falls back to the chat model.
+    judge_model: str | None = None
+
     # Observability (M1 minimal stubs; full at M2)
     langfuse_host: str | None = None
     langfuse_public_key: str | None = None

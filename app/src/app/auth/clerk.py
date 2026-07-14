@@ -42,6 +42,7 @@ class Principal(BaseModel):
     user_id: str | None = None
     org_role: str | None = None
     auth_method: str = "jwt"  # jwt | apikey
+    key_id: int | None = None  # M7: API-key id for metering + per-key budget cap
 
 
 def verify_token(token: str) -> Principal:

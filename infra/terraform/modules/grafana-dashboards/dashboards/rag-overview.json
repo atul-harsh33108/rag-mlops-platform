@@ -1,0 +1,89 @@
+{
+  "annotations": { "list": [] },
+  "title": "RAG Platform — Overview",
+  "uid": "rag-overview",
+  "version": 1,
+  "schemaVersion": 39,
+  "tags": ["rag", "mlops"],
+  "time": { "from": "now-6h", "to": "now" },
+  "refresh": "30s",
+  "timezone": "utc",
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Request rate / error rate",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(rag_chat_requests_total[5m]))", "legendFormat": "req/s" },
+        { "refId": "B", "expr": "sum(rate(rag_chat_requests_total{status=\"error\"}[5m])) / clamp_min(sum(rate(rag_chat_requests_total[5m])), 1e-9)", "legendFormat": "error %", "hidden": false }
+      ],
+      "fieldConfig": { "defaults": { "unit": "reqps" } }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Latency p50 / p95",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "expr": "histogram_quantile(0.5, sum(rate(rag_chat_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p50" },
+        { "refId": "B", "expr": "histogram_quantile(0.95, sum(rate(rag_chat_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p95" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "id": 3,
+      "type": "heatmap",
+      "title": "Latency heatmap by model",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(rag_chat_duration_seconds_bucket[5m])) by (le, model)", "legendFormat": "{{model}}" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Cost per turn (USD, last 1h)",
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 8 },
+      "datasource": { "type": "postgres", "uid": "Langfuse" },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "select coalesce(sum(total_cost)/nullif(count(*),0), 0) as cost_per_turn from observations where created_at > now() - interval '1 hour' and type = 'GENERATE';",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "currencyusd", "decimals": 4 } }
+    },
+    {
+      "id": 5,
+      "type": "table",
+      "title": "Top-10 slowest traces (last 1h)",
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 8 },
+      "datasource": { "type": "postgres", "uid": "Langfuse" },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "select id, name, (end_time - start_time) as duration, total_cost from traces where start_time > now() - interval '1 hour' order by (end_time - start_time) desc limit 10;",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Error rate by tool / no-info rate",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(rag_chat_requests_total{status=\"error\"}[5m])) by (tool)", "legendFormat": "err {{tool}}" },
+        { "refId": "B", "expr": "sum(rate(rag_no_info_total[5m])) / clamp_min(sum(rate(rag_chat_requests_total[5m])), 1e-9)", "legendFormat": "no-info %" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percentunit" } }
+    }
+  ]
+}

@@ -12,8 +12,8 @@ on:
 permissions:
   contents: read
   packages: write
-  id-token: write      # OIDC for cosign keyless signing
-  security-events: write  # Trivy SARIF upload
+  id-token: write      # OIDC for cosign keyless signing + AWS role assumption (ECR push, M5)
+  security-events: write  # Trivy + Gitleaks SARIF upload
 
 jobs:
   lint-test:
@@ -33,6 +33,17 @@ jobs:
       - name: Lint Airflow DAGs (pipelines)
         working-directory: pipelines
         run: uv run --with "ruff>=0.7" ruff check dags || true   # airflow.sdk imports don't resolve locally; report only
+
+  # Secret scanning (M5). Fails the build on a committed secret. Uploads SARIF to Security tab.
+  gitleaks:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }   # full history — catch secrets introduced in old commits
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # Optional: set GITLEAKS_LICENSE + GITLEAKS_ENABLE_COMMENTS for org-level features.
 
   helm:
     runs-on: ubuntu-22.04
@@ -102,10 +113,30 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Push + sign (main only)
+      - name: Push + sign GHCR (main only)
         if: github.event_name == 'push'
         run: |
           docker push ghcr.io/${{ github.repository }}/${{ matrix.target }}:sha-${{ github.sha }}
           curl -sSfL https://github.com/sigstore/cosign/releases/latest/download/cosign-linux-amd64 -o /usr/local/bin/cosign
           chmod +x /usr/local/bin/cosign
           cosign sign --yes ghcr.io/${{ github.repository }}/${{ matrix.target }}:sha-${{ github.sha }}
+      # M5: also push to ECR via OIDC (no static AWS keys). The ci_deploy role (Terraform
+      # output ci_deploy_role_arn, repo secret AWS_DEPLOY_ROLE_ARN) is allowed ecr:BatchPutImage
+      # on the app/pipelines/ui repos. Argo pulls from ECR in-cluster via IRSA.
+      - name: Configure AWS credentials (OIDC)
+        if: github.event_name == 'push'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+      - name: Login ECR
+        if: github.event_name == 'push'
+        uses: aws-actions/amazon-ecr-login@v2
+      - name: Push to ECR (main only)
+        if: github.event_name == 'push'
+        run: |
+          REG=$(aws ecr describe-registry --query registryId --output text).dkr.ecr.${AWS_REGION}.amazonaws.com
+          docker tag ghcr.io/${{ github.repository }}/${{ matrix.target }}:sha-${{ github.sha }} \
+                     ${REG}/mlops-${{ matrix.target }}:sha-${{ github.sha }}
+          docker push ${REG}/mlops-${{ matrix.target }}:sha-${{ github.sha }}
+          echo "ECR image: ${REG}/mlops-${{ matrix.target }}:sha-${{ github.sha }}"

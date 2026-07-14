@@ -42,6 +42,31 @@ tei:
   resources:
     requests: {cpu: "1", memory: "2Gi"}
 
+# --- in-cluster vLLM serving (EKS/M5 only). Disabled by default; enabled in values-eks.yaml.
+#     Reads model weights from S3 via the Mountpoint CSI driver (ReadOnlyMany PV). The
+#     ServiceAccount carries an IRSA role granting s3:GetObject on the models bucket — set
+#     irsaRoleArn to the role ARN output by terraform module.vllm_irsa. LiteLLM routes to the
+#     `mlops-vllm` service as the primary provider; Bedrock is the Bifrost fallback.
+vllm:
+  enabled: false
+  image:
+    repository: vllm/vllm-openai
+    tag: v0.10.2
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  irsaRoleArn: ""                       # terraform output: module.vllm_irsa.iam_role_arn
+  model:
+    name: qwen3:14b                     # served-model-name (LiteLLM routes "qwen3:14b" → here)
+    bucket: ""                          # S3 models bucket (terraform s3-bucket module)
+    s3Path: ""                           # key within bucket, e.g. models/qwen3-14b-awq
+  resources:
+    requests:
+      cpu: "4"
+      memory: "16Gi"
+      nvidia.com/gpu: 1
+    limits:
+      nvidia.com/gpu: 1
+
 # --- the RAG app (local subchart charts/app) ---
 app:
   image:
@@ -65,6 +90,16 @@ app:
   langfuseHost: ""
   otelExporterOtlpEndpoint: ""
   mlflowTrackingUri: ""
+  # M7 SaaS billing + sampled eval. Non-secret config here; secret keys
+  # (LAGO_API_KEY, STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, CLERK_WEBHOOK_SECRET) come from
+  # billing.existingSecret (External Secrets in prod). Empty = billing disabled (local dev).
+  billing:
+    existingSecret: ""
+    lagoApiBase: ""
+    lagoWebhookHost: ""
+    billableMetricCode: "llm-spend"
+    evalSampleRate: "0.05"
+    judgeModel: ""
   ingress:
     enabled: false
     className: nginx

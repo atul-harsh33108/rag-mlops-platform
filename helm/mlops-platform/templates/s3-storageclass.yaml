@@ -1,0 +1,23 @@
+{{/* Mountpoint for S3 CSI driver StorageClass (M5). Lets a ReadOnlyMany PVC mount an S3
+    bucket as a filesystem — used by the vLLM pod to read model weights straight from the
+    models bucket (~95% cheaper than EBS, lazy-loads on read). The driver itself is installed
+    by Terraform (eks add-on mountpoint-s3-csi); this just registers the StorageClass pointing
+    at the models bucket. Gated by .Values.vllm.enabled so it only ships where vLLM ships. */}}
+{{- if .Values.vllm.enabled }}
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: s3-mountpoint
+  labels:
+    app.kubernetes.io/name: vllm
+    app.kubernetes.io/part-of: mlops-platform
+provisioner: s3.csi.aws.com
+volumeBindingMode: Immediate
+allowVolumeExpansion: false
+# Mountpoint CSI reads the bucket name here. The IRSA role on vllm-sa grants s3:GetObject/ListBucket
+# on this bucket (created by terraform module.vllm_irsa). Subdir is optional; default to the root.
+parameters:
+  bucketName: {{ .Values.vllm.model.bucket | quote }}
+  mountOptions: "allow-other"
+reclaimPolicy: Retain
+{{- end }}

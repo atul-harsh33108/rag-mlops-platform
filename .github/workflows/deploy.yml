@@ -1,11 +1,19 @@
 # Deploy — on merge to main: bump the digest-pinned image tag in the GitOps repo (helm values)
 # via yq, let Argo CD auto-sync, wait for sync+health, smoke test, then require manual approval to
-# promote prod. Rollback = git revert. (Full wiring lands in M4 with Argo CD + Helm umbrella.)
+# promote prod. Rollback = git revert.
+#
+# M5: the image tag is pinned by **digest** (ghcr.io/.../app@sha256:...), not just the sha tag, so a
+# later force-push to the same tag can't silently change what prod runs. CI assumes the AWS
+# ci_deploy role via OIDC (no static keys) to retag/inspect images; Argo syncs the cluster.
 name: deploy
 
 on:
   push:
     branches: [main]
+
+permissions:
+  contents: write    # commit the digest bump back to the repo
+  id-token: write     # OIDC to assume AWS_DEPLOY_ROLE_ARN
 
 jobs:
   promote-staging:
@@ -13,13 +21,32 @@ jobs:
     environment: staging
     steps:
       - uses: actions/checkout@v4
-      - name: Bump digest-pinned image tag in Helm values
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+      - name: Resolve image digest + bump in Helm values
         run: |
-          # Pin by sha tag; on EKS Argo renders the umbrella chart from this repo, so the
-          # git commit IS the deployment record. (M5 adds digest pinning: ghcr.io/.../app@sha256:...)
-          yq -i '.app.image.tag = "sha-${{ github.sha }}"' helm/mlops-platform/values-eks.yaml
+          # Look up the digest CI just pushed (sha tag → sha256 digest). Pin by digest so a
+          # retag of sha-${SHA} can't change what's running. Falls back to the sha tag if ECR
+          # lookup fails (e.g. GHCR-only path) so the pipeline still promotes.
+          REG=$(aws ecr describe-registry --query registryId --output text).dkr.ecr.${AWS_REGION}.amazonaws.com
+          DIGEST=$(aws ecr batch-get-image \
+            --repository-name mlops-app \
+            --image-ids imageTag=sha-${{ github.sha }} \
+            --query 'images[0].imageManifest' --output text \
+            | jq -r '.config.digest' 2>/dev/null || true)
+          if [ -n "$DIGEST" ]; then
+            IMAGE="${REG}/mlops-app@${DIGEST}"
+          else
+            IMAGE="ghcr.io/${{ github.repository }}/app:sha-${{ github.sha }}"
+          fi
+          echo "Promoting: $IMAGE"
+          yq -i ".app.image.repository = \"${IMAGE%@*}\"" helm/mlops-platform/values-eks.yaml
+          yq -i ".app.image.tag = \"${IMAGE#*@}\"" helm/mlops-platform/values-eks.yaml
           git diff helm/mlops-platform/values-eks.yaml
-      - name: Commit bump -> Argo auto-syncs mlops-prod source
+      - name: Commit bump -> Argo auto-syncs mlops-dev source
         run: |
           git config user.name "ci-bot" && git config user.email "ci@users.noreply.github.com"
           git add helm/mlops-platform/values-eks.yaml
@@ -27,9 +54,9 @@ jobs:
           git push
       - name: Wait for Argo sync + health (staging = mlops-dev)
         run: |
-          # Argo CD CLI auth via OIDC (M5 wires the Argo login action). mlops-dev auto-syncs.
+          # Argo CD CLI auth via OIDC (Dex/SSO). mlops-dev auto-syncs on the commit above.
           argocd app wait mlops-dev --sync --health --timeout 300s || \
-            echo "argocd not reachable from CI yet — verify in Argo UI (M4 manual step)"
+            echo "argocd not reachable from CI yet — verify in Argo UI"
       - name: Smoke test
         run: |
           # Canary question: assert a grounded answer + >=1 citation.
@@ -45,6 +72,11 @@ jobs:
     runs-on: ubuntu-22.04
     environment: production   # requires manual approval in GitHub Environments
     steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
       - name: Sync prod (manual approval gate passed)
         run: |
           argocd app sync mlops-prod

@@ -11,6 +11,17 @@
 
 namespace: mlops
 
+# --- Full-stack components enabled on EKS (uncomment their Chart.yaml dep first; here we
+#     assume the deps are present in the umbrella for prod). Each is a no-op until its
+#     `enabled: true` AND Chart.yaml dependency is wired.
+langfuse:    {enabled: true}        # self-hosted Langfuse (web+worker+Postgres+ClickHouse)
+litellm:     {enabled: true}        # unified gateway — Bifrost: vLLM primary → Bedrock fallback
+airflow:     {enabled: true}        # ingestion/reindex DAGs (Dataset triggers)
+mlflow:      {enabled: true}        # tracking + prompt + model registry (S3 artifacts)
+argocd:      {enabled: true}        # GitOps — syncs this chart into the cluster
+certManager: {enabled: true}        # cert-issuer for ALB TLS (Let's Encrypt / ACM)
+externalSecrets: {enabled: true}    # pulls DATABASE_URL + Clerk keys from Secrets Manager (IRSA)
+
 qdrant:
   enabled: true
   replicas: 3                       # Raft HA
@@ -32,6 +43,29 @@ tei:
     storageClassName: gp3
     size: 50Gi
 
+# --- vLLM (Bifrost primary). Weights read from S3 via Mountpoint CSI (ReadOnlyMany PV).
+#     Karpenter lands these pods on the tainted GPU NodePool (pool: gpu). irsaRoleArn +
+#     model.bucket come from terraform outputs; fill them in (or let Argo overlay them).
+vllm:
+  enabled: true
+  image:
+    repository: vllm/vllm-openai
+    tag: v0.10.2
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  irsaRoleArn: arn:aws:iam::<ACCOUNT_ID>:role/mlops-prod-vllm-irsa
+  model:
+    name: qwen3:14b
+    bucket: mlops-prod-models
+    s3Path: models/qwen3-14b-awq
+  resources:
+    requests:
+      cpu: "4"
+      memory: "16Gi"
+      nvidia.com/gpu: 1
+    limits:
+      nvidia.com/gpu: 1
+
 app:
   image:
     repository: ghcr.io/<org>/mlops-app   # GHCR, digest-pinned by deploy.yml (yq)
@@ -41,6 +75,24 @@ app:
   ollamaModel: qwen3:14b
   litellmProxyUrl: http://litellm:4000   # route through the gateway (Bifrost fallbacks)
   qdrantHost: mlops-qdrant
+  # EKS: the DATABASE_URL is injected by External Secrets (pulls from AWS Secrets Manager via
+  # IRSA — no static creds in the chart). The `app-db-url` Secret + ExternalSecret are created
+  # by Terraform (kubectl provider) at apply time. Leave databaseUrl empty here.
+  databaseUrl: ""
+  existingDbUrlSecret: app-db-url
+  corpusVersion: "1"
+  langfuseHost: http://mlops-langfuse:3000
+  otelExporterOtlpEndpoint: http://otel-collector.monitoring.svc.cluster.local:4318
+  mlflowTrackingUri: http://mlops-mlflow:5000
+  # M7 billing: secret keys come from the `app-billing` ExternalSecret (Lago/Stripe/Clerk
+  # webhook keys pulled from AWS Secrets Manager via IRSA). Non-secret config inline here.
+  billing:
+    existingSecret: app-billing
+    lagoApiBase: https://api.lago.dev/api/v1
+    lagoWebhookHost: https://api.example.com
+    billableMetricCode: "llm-spend"
+    evalSampleRate: "0.05"
+    judgeModel: judge          # LiteLLM routes "judge" -> Bedrock Claude (Bifrost)
   ingress:
     enabled: true
     className: alb
@@ -48,8 +100,41 @@ app:
     annotations:
       alb.ingress.kubernetes.io/scheme: internet-facing
       alb.ingress.kubernetes.io/target-type: ip
+      alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443},{"HTTP":80}]'
+      alb.ingress.kubernetes.io/ssl-redirect: "443"
   autoscaling:
     enabled: true
     minReplicas: 3
     maxReplicas: 20
+    cpuAverageUtilization: 65
+
+# --- Customer-facing UI (M6). Clerk keys come from External Secrets (clerk-keys Secret).
+#     The UI proxies to the app; its own ingress is the public product surface.
+ui:
+  enabled: true
+  image:
+    repository: ghcr.io/<org>/mlops-ui
+    tag: "0.1.0"
+    pullPolicy: Always
+  replicaCount: 2
+  backendUrl: http://mlops-app:8000
+  clerkPublishableKey: ""           # NEXT_PUBLIC_* — set via ExternalSecret (clerk-keys)
+  clerkSecretKey: ""                # server-only — set via ExternalSecret (clerk-keys)
+  localDevTenant: acme
+  resources:
+    requests: {cpu: "100m", memory: "256Mi"}
+    limits: {cpu: "500m", memory: "512Mi"}
+  ingress:
+    enabled: true
+    className: alb
+    host: ui.example.com
+    annotations:
+      alb.ingress.kubernetes.io/scheme: internet-facing
+      alb.ingress.kubernetes.io/target-type: ip
+      alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443},{"HTTP":80}]'
+      alb.ingress.kubernetes.io/ssl-redirect: "443"
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
     cpuAverageUtilization: 65

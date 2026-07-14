@@ -8,3 +8,8 @@
 | 0004 | Feast deferred — not needed for pure RAG | Accepted |
 | 0005 | Qdrant over Milvus (corpus < 100M vectors) | Accepted |
 | 0006 | Clerk for demo auth; Keycloak documented for self-hosted | Accepted |
+| 0007 | Airflow 3.x orchestration (Dataset triggers for re-indexing) | Accepted |
+| 0008 | Bifrost cascade — vLLM primary, Bedrock fallback (M5 EKS) | Accepted |
+| 0009 | S3 + Mountpoint CSI for model weights (not EBS) (M5 EKS) | Accepted |
+| 0010 | Billing: LiteLLM → Lago → Stripe (M7) | Accepted |
+| 0011 | Server-side usage metering + reconciliation (streaming under-count fix) (M7) | Accepted |

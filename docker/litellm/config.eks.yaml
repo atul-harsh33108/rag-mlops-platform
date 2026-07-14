@@ -1,0 +1,62 @@
+# LiteLLM proxy config — EKS production (M5 Bifrost Cascade).
+# Docs: https://docs.litellm.ai/docs/proxy/configs and https://docs.litellm.ai/docs/proxy/reliability
+#
+# Routing: clients (the RAG app, evals) call model "qwen3:14b". LiteLLM routes to the in-cluster
+# vLLM service (http://mlops-vllm:8000/v1) as the PRIMARY. If vLLM errors or is unavailable
+# (Spot interruption drained the node, Karpenter consolidated, OOM), the `fallbacks` block
+# retries on Bedrock Claude Sonnet — no 5xx reaches the client. This is the Bifrost cascade.
+#
+# Bedrock auth = IRSA: the LiteLLM pod's ServiceAccount carries a role with
+# `bedrock:InvokeModel`. No static AWS keys — LiteLLM reads AWS_REGION + the pod IAM role.
+# See docs/decisions/bifrost-bedrock-vllm.md.
+model_list:
+  # Primary: in-cluster vLLM (Qwen3-14B AWQ on a Karpenter GPU node).
+  - model_name: qwen3:14b
+    litellm_params:
+      model: openai/qwen3:14b            # OpenAI-compatible client pointed at vLLM
+      api_base: http://mlops-vllm:8000/v1
+      api_key: os.environ/VLLM_API_KEY   # vLLM doesn't enforce it internally; LiteLLM requires a value
+      drop_params: true                  # drop ollama-only options.* when routing to vLLM
+      request_timeout: 120
+      num_retries: 0                      # let the fallback chain handle it, not LiteLLM's own retry loop
+
+  # Fallback: Bedrock Claude Sonnet. Reached only when the primary raises (Spot kill / 5xx / timeout).
+  - model_name: bedrock-claude
+    litellm_params:
+      model: bedrock/anthropic.claude-3-5-sonnet-20240620
+      aws_region_name: os.environ/AWS_REGION
+
+  # Judge model for evals (M2/M7). GPT-4-class on prod → Bedrock Claude Sonnet (separate budget).
+  - model_name: judge
+    litellm_params:
+      model: bedrock/anthropic.claude-3-5-sonnet-20240620
+      aws_region_name: os.environ/AWS_REGION
+
+litellm_settings:
+  drop_params: true
+  # Bifrost cascade: qwen3:14b → bedrock-claude. LiteLLM evaluates fallbacks IN ORDER on any
+  # BadRequest/Authentication/Timeout/RateLimit/InternalServerError from the primary. Spot kill
+  # surfaces as connection errors → falls through to Bedrock.
+  fallbacks:
+    - qwen3:14b:
+        - bedrock-claude
+  # Native OpenTelemetry callback (NOT OpenLLMetry — bug #3167 for non-OpenAI providers).
+  # Spans go to the OTel collector → Langfuse. Lago (M7) reports each call's spend as a
+  # billable-metric event to Lago, which invoices via Stripe. Requires env (set via External
+  # Secrets): LAGO_API_BASE_URL, LAGO_API_KEY, LAGO_WEBHOOK_HOST, and the billable metric
+  # code `llm-spend` created in Lago out-of-band (see docs/runbooks/saas.md).
+  success_callback: ["otel", "lago"]
+  failure_callback: ["otel"]
+  # Per-tenant hard budgets: LiteLLM enforces a 429 when a tenant crosses its budget. The
+  # app ALSO enforces the cap pre-generation (app/billing/spend.py) for a faster,
+  # upgrade-prompt 429; this is the defense-in-depth backstop at the gateway.
+  budget_ratelimiter: redis
+  request_timeout: 120
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/DATABASE_URL   # same RDS as the app (LiteLLM_SpendLogs table)
+  store_model_in_db: false
+
+litellm_settings_ui:
+  enabled: true                           # LiteLLM admin UI on :4000 (internal, behind SSO)

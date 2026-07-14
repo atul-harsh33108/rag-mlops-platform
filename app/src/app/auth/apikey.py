@@ -61,7 +61,7 @@ async def verify_key(session: AsyncSession, plaintext: str) -> Principal | None:
     row = res.first()
     if row is None:
         return None
-    return Principal(tenant_id=row.tenant_id, auth_method="apikey")
+    return Principal(tenant_id=row.tenant_id, auth_method="apikey", key_id=int(row.id))
 
 
 async def list_keys(session: AsyncSession, tenant_id: str) -> list[dict]:

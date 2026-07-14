@@ -43,6 +43,13 @@ dev = [
     "mypy>=1.13",
     "httpx",  # for test client
 ]
+# M7 SaaS billing — only needed in prod for Clerk/Stripe webhook signature verification.
+# Imported lazily (guarded) so the app boots without them; the webhooks return 503 until
+# installed. `uv sync --extra billing` in the prod image.
+billing = [
+    "svix>=1.24",
+    "stripe>=10.0",
+]
 
 [build-system]
 requires = ["hatchling"]

@@ -12,7 +12,10 @@ COPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /usr/local/bin/uv
 COPY pyproject.toml ./
 RUN uv sync --no-install-project --no-dev
 COPY src ./src
-RUN uv sync --no-dev
+# --extra billing installs svix + stripe for Clerk/Stripe webhook signature
+# verification (M7). Imported lazily so the app boots without them; webhooks
+# return 503 until installed.
+RUN uv sync --no-dev --extra billing
 
 FROM python:3.12-slim AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 \

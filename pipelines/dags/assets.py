@@ -25,6 +25,17 @@ DEFAULT_TENANT = os.getenv("DEFAULT_TENANT", "acme")
 # The metadata Postgres (DATABASE_URL) for corpus_version bump under advisory lock.
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://mlops:CHANGE_ME@postgres:5432/mlops")
 
+# M7: the LiteLLM DB (separate database) — reconciliation vs LiteLLM_SpendLogs. The app DB
+# above holds usage_events (server-side metering). Langfuse usage is read via its API.
+LITELLM_DATABASE_URL = os.getenv(
+    "LITELLM_DATABASE_URL", "postgresql://litellm:litellm@postgres:5432/litellm"
+)
+
+# M7: Alertmanager webhook for reconciliation + regression alerts.
+ALERTMANAGER_WEBHOOK = os.getenv(
+    "ALERTMANAGER_WEBHOOK", "http://alertmanager.monitoring.svc.cluster.local:9093/api/v2/alerts"
+)
+
 # Mounted read-only from data/corpus on the host (see compose.orchestration.yml).
 CORPUS_DIR = os.getenv("CORPUS_DIR", "/opt/airflow/corpus")
 
