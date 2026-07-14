@@ -1,0 +1,12 @@
+# Pinned RAGAS/DeepEval judge model. CRITICAL: pin model + version + temperature to
+# avoid judge drift over time (positional/verbosity/self-preference biases). Track
+# P50/P90/P99 of scores, not means — means hide tail regressions.
+judge:
+  # Routed through the same LiteLLM gateway as prod so the judge is metered & budget-capped.
+  # M7: give the judge its own LiteLLM key with a cap; fall back to a Haiku-class model at 80% budget.
+  base_url: ${JUDGE_BASE_URL}      # e.g. http://litellm:4000/v1 or http://ollama:11434/v1
+  model: ${JUDGE_MODEL}            # e.g. qwen3:14b (local) or gpt-4o (cloud judge)
+  api_key: ${JUDGE_API_KEY}        # LiteLLM virtual key or provider key
+  temperature: 0.0
+  # Pin the model version label for reproducibility logging.
+  version_label: "qwen3-14b-2026-local"

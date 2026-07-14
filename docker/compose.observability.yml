@@ -1,0 +1,3 @@
+# Observability stack (Milestone 5): Prometheus, Loki, Grafana, Alertmanager, OTel collector.
+# Under the `observability` profile. Implemented in M5. Empty stub for the top-level `include:`.
+services: {}

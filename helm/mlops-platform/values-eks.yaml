@@ -1,0 +1,55 @@
+# values-eks.yaml — AWS EKS production (M5). Filled out at M5 (Terraform provisions the
+# cluster; this chart runs on it via Argo CD). Highlights captured here as placeholders.
+#
+# M5 wiring:
+#   - qdrant: 3-node Raft, TurboQuant TQ4, IRSA-backed S3 snapshots
+#   - app:    Bedrock fallback via LiteLLM (Bifrost), vLLM on g6e GPU nodes via Karpenter
+#   - storage: gp3 / S3 Mountpoint for model weights (ReadOnlyMany PV)
+#   - ingress: AWS ALB (aws-load-balancer-controller), NLB for vLLM/TEI
+#   - secrets: External Secrets Operator + IRSA (no static keys)
+#   - observability: Prometheus + Loki + Grafana + Alertmanager
+
+namespace: mlops
+
+qdrant:
+  enabled: true
+  replicas: 3                       # Raft HA
+  persistence:
+    storageClassName: gp3
+    size: 50Gi
+
+ingressNginx:
+  enabled: false                    # EKS uses ALB (aws-load-balancer-controller), not nginx
+
+ollama:
+  enabled: false                    # prod uses vLLM/Bedrock, not Ollama
+tei:
+  enabled: true
+  gpu: true
+  nodeSelector:
+    node.kubernetes.io/instance-type: g6e.xlarge
+  persistence:
+    storageClassName: gp3
+    size: 50Gi
+
+app:
+  image:
+    repository: ghcr.io/<org>/mlops-app   # GHCR, digest-pinned by deploy.yml (yq)
+    tag: "0.1.0"
+    pullPolicy: Always
+  replicaCount: 3
+  ollamaModel: qwen3:14b
+  litellmProxyUrl: http://litellm:4000   # route through the gateway (Bifrost fallbacks)
+  qdrantHost: mlops-qdrant
+  ingress:
+    enabled: true
+    className: alb
+    host: rag.example.com
+    annotations:
+      alb.ingress.kubernetes.io/scheme: internet-facing
+      alb.ingress.kubernetes.io/target-type: ip
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 20
+    cpuAverageUtilization: 65

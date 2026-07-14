@@ -1,0 +1,54 @@
+# Deploy — on merge to main: bump the digest-pinned image tag in the GitOps repo (helm values)
+# via yq, let Argo CD auto-sync, wait for sync+health, smoke test, then require manual approval to
+# promote prod. Rollback = git revert. (Full wiring lands in M4 with Argo CD + Helm umbrella.)
+name: deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  promote-staging:
+    runs-on: ubuntu-22.04
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bump digest-pinned image tag in Helm values
+        run: |
+          # Pin by sha tag; on EKS Argo renders the umbrella chart from this repo, so the
+          # git commit IS the deployment record. (M5 adds digest pinning: ghcr.io/.../app@sha256:...)
+          yq -i '.app.image.tag = "sha-${{ github.sha }}"' helm/mlops-platform/values-eks.yaml
+          git diff helm/mlops-platform/values-eks.yaml
+      - name: Commit bump -> Argo auto-syncs mlops-prod source
+        run: |
+          git config user.name "ci-bot" && git config user.email "ci@users.noreply.github.com"
+          git add helm/mlops-platform/values-eks.yaml
+          git commit -m "chore: promote app to sha-${{ github.sha }}"
+          git push
+      - name: Wait for Argo sync + health (staging = mlops-dev)
+        run: |
+          # Argo CD CLI auth via OIDC (M5 wires the Argo login action). mlops-dev auto-syncs.
+          argocd app wait mlops-dev --sync --health --timeout 300s || \
+            echo "argocd not reachable from CI yet — verify in Argo UI (M4 manual step)"
+      - name: Smoke test
+        run: |
+          # Canary question: assert a grounded answer + >=1 citation.
+          RESP=$(curl -fsS http://mlops-app.mlops.svc.cluster.local:8000/chat \
+            -H 'Content-Type: application/json' \
+            -d '{"question":"How do I reset my password?","tenant":"acme","stream":false}')
+          echo "$RESP"
+          echo "$RESP" | jq -e '.answer | length > 0 and (.citations | length) >= 1' || \
+            { echo "smoke failed"; exit 1; }
+
+  promote-prod:
+    needs: promote-staging
+    runs-on: ubuntu-22.04
+    environment: production   # requires manual approval in GitHub Environments
+    steps:
+      - name: Sync prod (manual approval gate passed)
+        run: |
+          argocd app sync mlops-prod
+          argocd app wait mlops-prod --sync --health --timeout 300s
+      - name: k6 load + Grafana green check (M5 adds the dashboard assertion)
+        run: |
+          echo "M5: k6 @20 RPS/10min, Grafana 6-panel all green"

@@ -1,0 +1,48 @@
+# Orchestration (M3): Airflow 3.x running the corpus ingest / reindex / canary DAGs.
+# Profile: orch. Start with: `task dev:up core,ai,orch` (add mlops for MLflow/Langfuse).
+#
+# Local dev uses `airflow standalone` (api-server + scheduler + triggerer + dag-processor
+# in one process, sqlite + LocalExecutor). Prod uses the Bitnami Airflow chart with
+# Postgres + KubernetesExecutor (M4/M5) — same DAGs, no code change (airflow.sdk is
+# runtime-portable).
+services:
+  airflow:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.pipelines
+    image: mlops/airflow:0.1
+    profiles: ["orch"]
+    restart: unless-stopped
+    networks: [mlops-net]
+    ports: ["127.0.0.1:8080:8080"]   # Airflow API + UI
+    environment:
+      TZ: UTC
+      # DAG constants (read by assets.py) — point at the in-network services.
+      APP_BASE_URL: http://app:8000
+      QDRANT_BASE_URL: http://qdrant:6333
+      DATABASE_URL: ${DATABASE_URL:-postgresql://mlops:CHANGE_ME@postgres:5432/mlops}
+      DEFAULT_TENANT: ${DEFAULT_TENANT:-acme}
+      CORPUS_DIR: /opt/airflow/corpus
+      OTEL_ENDPOINT: http://otel-collector:4318
+      # Airflow standalone needs an admin user for the UI.
+      _AIRFLOW_WWW_USER_USERNAME: admin
+      _AIRFLOW_WWW_USER_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:-admin}
+    volumes:
+      # DAGs package (hot-reload during dev) + sqlite state.
+      - ../pipelines:/opt/airflow/pipelines
+      - airflow_data:/opt/airflow/airflow.db
+      # Read-only corpus the ingest DAG fans out over.
+      - ../data/corpus:/opt/airflow/corpus:ro
+    command: ["standalone"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 15
+      start_period: 90s
+    depends_on:
+      app: { condition: service_healthy }
+      qdrant: { condition: service_started }
+
+volumes:
+  airflow_data:

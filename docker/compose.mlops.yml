@@ -1,0 +1,226 @@
+# MLOps services (Milestone 2): Langfuse v3 (web+worker+ClickHouse+Valkey+MinIO) + MLflow 3.14
+# + OTel collector. Profile: mlops. Start with: `task dev:up core,ai,mlops`.
+#
+# CRITICAL GOTCHA: Postgres + ClickHouse MUST run at TZ=UTC or Langfuse cost dashboards
+# and trace timestamps drift silently. TZ=UTC is set on every stateful service below and
+# on the ClickHouse server config (see docker/clickhouse/config.xml).
+services:
+  # --- Langfuse metadata DB (dedicated; UTC) ---
+  langfuse-db:
+    image: postgres:17-alpine
+    profiles: ["mlops"]
+    restart: unless-stopped
+    networks: [mlops-net]
+    environment:
+      TZ: UTC
+      POSTGRES_DB: langfuse
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: ${LANGFUSE_DB_PASSWORD:-CHANGE_ME}
+    volumes:
+      - langfuse_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse -d langfuse"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  # --- ClickHouse (Langfuse OLAP store for traces/observations/scores; UTC) ---
+  clickhouse:
+    image: clickhouse/clickhouse-server:25.3
+    profiles: ["mlops"]
+    restart: unless-stopped
+    networks: [mlops-net]
+    ports: ["127.0.0.1:8123:8123"]
+    environment:
+      TZ: UTC
+      CLICKHOUSE_DB: langfuse
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-clickhouse}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-CHANGE_ME}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - ./clickhouse/config.xml:/etc/clickhouse-server/config.d/utc.xml:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8123/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  # --- Valkey (Langfuse cache + queue) ---
+  valkey:
+    image: valkey/valkey:8-alpine
+    profiles: ["mlops"]
+    restart: unless-stopped
+    networks: [mlops-net]
+    command: ["valkey-server", "--appendonly", "yes"]
+    volumes:
+      - valkey_data:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  # --- MinIO (Langfuse raw events + multimodal blobs + MLflow artifacts) ---
+  minio:
+    image: minio/minio:latest
+    profiles: ["mlops"]
+    restart: unless-stopped
+    networks: [mlops-net]
+    ports: ["127.0.0.1:9000:9000", "127.0.0.1:9001:9001"]
+    environment:
+      TZ: UTC
+      MINIO_ROOT_USER: ${S3_STORAGE_ACCESS_KEY:-CHANGE_ME}
+      MINIO_ROOT_PASSWORD: ${S3_STORAGE_SECRET_KEY:-CHANGE_ME}
+    command: ["server", "/data", "--console-address", ":9001"]
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+
+  # one-shot bucket creator for langfuse + mlflow
+  minio-init:
+    image: minio/mc:latest
+    profiles: ["mlops"]
+    networks: [mlops-net]
+    depends_on:
+      minio: { condition: service_healthy }
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >
+        mc alias set local http://minio:9000 ${S3_STORAGE_ACCESS_KEY:-CHANGE_ME} ${S3_STORAGE_SECRET_KEY:-CHANGE_ME};
+        mc mb -p local/${S3_STORAGE_BUCKET:-langfuse-blobs} || true;
+        mc mb -p local/mlflow-artifacts || true;
+        echo "buckets ready"
+
+  # --- Langfuse web (UI + API) ---
+  langfuse-web:
+    image: langfuse/langfuse:3
+    profiles: ["mlops"]
+    restart: unless-stopped
+    networks: [mlops-net]
+    ports: ["127.0.0.1:3001:3000"]
+    # See https://langfuse.com/self-hosting for the canonical env set; sync image tag.
+    environment:
+      TZ: UTC
+      DATABASE_URL: postgresql://langfuse:${LANGFUSE_DB_PASSWORD:-CHANGE_ME}@langfuse-db:5432/langfuse
+      NEXTAUTH_URL: http://localhost:3001
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-CHANGE_ME}
+      SALT: ${LANGFUSE_SALT:-CHANGE_ME}
+      ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:-CHANGE_ME}
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-clickhouse}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-CHANGE_ME}
+      REDIS_URL: redis://valkey:6379
+      S3_STORAGE_REGION: us-east-1
+      S3_STORAGE_ENDPOINT: http://minio:9000
+      S3_STORAGE_BUCKET: ${S3_STORAGE_BUCKET:-langfuse-blobs}
+      S3_STORAGE_ACCESS_KEY: ${S3_STORAGE_ACCESS_KEY:-CHANGE_ME}
+      S3_STORAGE_SECRET_KEY: ${S3_STORAGE_SECRET_KEY:-CHANGE_ME}
+      S3_STORAGE_FORCE_PATH_STYLE: "true"
+      S3_STORAGE_PREFIX: ""
+      LANGFUSE_DEBUG: "false"
+    depends_on:
+      langfuse-db: { condition: service_healthy }
+      clickhouse: { condition: service_healthy }
+      valkey: { condition: service_healthy }
+      minio-init: { condition: service_completed_successfully }
+
+  # --- Langfuse worker (async ingestion of traces into ClickHouse) ---
+  langfuse-worker:
+    image: langfuse/langfuse:3
+    profiles: ["mlops"]
+    restart: unless-stopped
+    networks: [mlops-net]
+    command: ["node", "./packages/worker/dist/index.js"]
+    environment: &langfuse-env
+      TZ: UTC
+      DATABASE_URL: postgresql://langfuse:${LANGFUSE_DB_PASSWORD:-CHANGE_ME}@langfuse-db:5432/langfuse
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-CHANGE_ME}
+      SALT: ${LANGFUSE_SALT:-CHANGE_ME}
+      ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:-CHANGE_ME}
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-clickhouse}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-CHANGE_ME}
+      REDIS_URL: redis://valkey:6379
+      S3_STORAGE_ENDPOINT: http://minio:9000
+      S3_STORAGE_BUCKET: ${S3_STORAGE_BUCKET:-langfuse-blobs}
+      S3_STORAGE_ACCESS_KEY: ${S3_STORAGE_ACCESS_KEY:-CHANGE_ME}
+      S3_STORAGE_SECRET_KEY: ${S3_STORAGE_SECRET_KEY:-CHANGE_ME}
+      S3_STORAGE_FORCE_PATH_STYLE: "true"
+    depends_on:
+      langfuse-db: { condition: service_healthy }
+      clickhouse: { condition: service_healthy }
+      valkey: { condition: service_healthy }
+
+  # --- MLflow 3.14 tracking server (postgres backend + MinIO artifacts) ---
+  mlflow-db:
+    image: postgres:17-alpine
+    profiles: ["mlops"]
+    restart: unless-stopped
+    networks: [mlops-net]
+    environment:
+      TZ: UTC
+      POSTGRES_DB: mlflow
+      POSTGRES_USER: mlflow
+      POSTGRES_PASSWORD: ${MLFLOW_DB_PASSWORD:-CHANGE_ME}
+    volumes:
+      - mlflow_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mlflow -d mlflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v3.14.0
+    profiles: ["mlops"]
+    restart: unless-stopped
+    networks: [mlops-net]
+    ports: ["127.0.0.1:5000:5000"]
+    environment:
+      TZ: UTC
+      MLFLOW_BACKEND_STORE_URI: postgresql://mlflow:${MLFLOW_DB_PASSWORD:-CHANGE_ME}@mlflow-db:5432/mlflow
+      MLFLOW_ARTIFACTS_DESTINATION: s3://mlflow-artifacts
+      MLFLOW_SERVE_ARTIFACTS: "true"
+      AWS_ACCESS_KEY_ID: ${S3_STORAGE_ACCESS_KEY:-CHANGE_ME}
+      AWS_SECRET_ACCESS_KEY: ${S3_STORAGE_SECRET_KEY:-CHANGE_ME}
+      AWS_ENDPOINT_URL: http://minio:9000
+      AWS_DEFAULT_REGION: us-east-1
+      MLFLOW_S3_ENDPOINT_URL: http://minio:9000
+      MLFLOW_S3_IGNORE_TLS: "true"
+    command:
+      - sh
+      - -c
+      - |
+        mlflow server --host 0.0.0.0 --port 5000
+        --backend-store-uri "$$MLFLOW_BACKEND_STORE_URI"
+        --serve-artifacts --artifacts-destination "$$MLFLOW_ARTIFACTS_DESTINATION"
+    depends_on:
+      mlflow-db: { condition: service_healthy }
+      minio-init: { condition: service_completed_successfully }
+
+  # --- OTel collector (OpenLLMetry → Langfuse /api/public/otel over HTTP) ---
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.110.0
+    profiles: ["mlops"]
+    restart: unless-stopped
+    networks: [mlops-net]
+    ports: ["127.0.0.1:4318:4318"]   # OTLP/HTTP (app + OpenLLMetry push here)
+    volumes:
+      - ./otel/collector-config.yaml:/etc/otelcol/config.yaml:ro
+    command: ["--config=/etc/otelcol/config.yaml"]
+
+volumes:
+  langfuse_db_data:
+  clickhouse_data:
+  valkey_data:
+  minio_data:
+  mlflow_db_data:

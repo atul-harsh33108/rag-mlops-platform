@@ -1,0 +1,17 @@
+# Eval quality gates. CI blocks on regression; production sampling alerts on drift.
+# Thresholds from 2026 production references: faithfulness >0.90 good / <0.70 critical;
+# context precision >0.85 / <0.65 critical.
+pr_gate:                     # runs on every PR (cheap: faithfulness + relevance only)
+  faithfulness: 0.80         # HARD gate — block merge below this
+  faithfulness_regression: 0.05  # block if dropped >0.05 vs baseline
+  answer_relevancy: 0.75
+nightly:                     # full suite once per day (reference-based metrics included)
+  faithfulness: 0.85
+  answer_relevancy: 0.80
+  context_precision: 0.80
+  context_recall: 0.85
+  answer_correctness: 0.80
+production_sampling:         # async eval on 5% of traffic (M7)
+  sample_rate: 0.05
+  faithfulness_alert_7d_drop: 0.05   # alert if 7-day rolling drops >0.05
+  no_answer_rate_alert: 0.25         # alert if "I don't know" >25% in 15 min

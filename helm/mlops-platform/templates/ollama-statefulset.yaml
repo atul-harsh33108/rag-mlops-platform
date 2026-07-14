@@ -1,0 +1,101 @@
+{{- if .Values.ollama.enabled }}
+# Optional in-cluster Ollama (StatefulSet so the pulled model persists on the PVC).
+# For prod (M5) this is disabled; the app routes through LiteLLM to vLLM/Bedrock.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: ollama
+  namespace: {{ include "mlops.namespace" . }}
+  labels:
+    app.kubernetes.io/name: ollama
+    app.kubernetes.io/part-of: mlops-platform
+spec:
+  serviceName: ollama
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ollama
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ollama
+    spec:
+      {{- if .Values.ollama.gpu }}
+      nodeSelector:
+        nvidia.com/gpu.present: "true"
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+      {{- end }}
+      containers:
+        - name: ollama
+          image: {{ .Values.ollama.image | quote }}
+          env:
+            - name: OLLAMA_KEEP_ALIVE
+              value: "30m"
+            - name: OLLAMA_MAX_LOADED_MODELS
+              value: "1"
+          ports:
+            - name: http
+              containerPort: 11434
+          volumeMounts:
+            - name: data
+              mountPath: /root/.ollama
+          resources:
+            {{- toYaml .Values.ollama.resources | nindent 12 }}
+            {{- if .Values.ollama.gpu }}
+            limits:
+              nvidia.com/gpu: 1
+            {{- end }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- with .Values.ollama.persistence.storageClassName }}
+        storageClassName: {{ . }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.ollama.persistence.size }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama
+  namespace: {{ include "mlops.namespace" . }}
+  labels:
+    app.kubernetes.io/name: ollama
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 11434
+      targetPort: http
+  selector:
+    app.kubernetes.io/name: ollama
+---
+# One-shot model puller (Job). Idempotent: `ollama pull` is a no-op if the model exists.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ollama-init
+  namespace: {{ include "mlops.namespace" . }}
+  labels:
+    app.kubernetes.io/name: ollama-init
+  annotations:
+    # Argo CD: re-run before each sync (idempotent pull).
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: pull
+          image: {{ .Values.ollama.image | quote }}
+          command: ["ollama", "pull", {{ .Values.ollama.model | quote }}]
+          env:
+            - name: OLLAMA_HOST
+              value: "http://ollama:11434"
+{{- end }}

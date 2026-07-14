@@ -1,0 +1,12 @@
+# Place at %USERPROFILE%\.wslconfig (Windows side). Tune to your machine.
+# Bump memory for vLLM + Postgres + Qdrant + Airflow together; default WSL allocates
+# only half host RAM and may OOM-kill vLLM. sparseVhd limits disk bloat from
+# Docker images + model weights. networkingMode=mirrored ONLY if behind a VPN
+# (otherwise leave NAT default — kind/k3d port forwarding misbehaves on mirrored
+# in some setups).
+[wsl2]
+memory=24GB
+processors=8
+swap=8GB
+sparseVhd=true
+# networkingMode=mirrored

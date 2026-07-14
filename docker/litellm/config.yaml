@@ -1,0 +1,43 @@
+# LiteLLM proxy config (M3). Docs: https://docs.litellm.ai/docs/proxy/configs.
+#
+# Routing: clients call model "qwen3:14b" (the app's OLLAMA_MODEL). LiteLLM routes to
+# Ollama locally. The fallback block is the M5 Bifrost Cascade: vLLM primary (prod) with
+# Bedrock fallback on Spot interruption. Left as a placeholder here so the local stack
+# runs on Ollama only; uncomment/switch at M5.
+#
+# Native OTel callback is enabled (NOT OpenLLMetry — bug #3167 for non-OpenAI providers).
+model_list:
+  - model_name: qwen3:14b
+    litellm_params:
+      model: ollama/qwen3:14b
+      api_base: os.environ/OLLAMA_API_BASE
+      drop_params: true          # drop ollama-only `options.num_ctx` when routing elsewhere
+      # --- M5 Bifrost Cascade (uncomment after EKS is up) ---
+      # fallbacks:
+      #   - bedrock/anthropic.claude-3-5-sonnet-20240620
+
+  # Judge model for evals (kept separate so the judge gets its own budget at M7).
+  - model_name: judge
+    litellm_params:
+      model: ollama/qwen3:14b
+      api_base: os.environ/OLLAMA_API_BASE
+      drop_params: true
+
+litellm_settings:
+  drop_params: true
+  # Native OpenTelemetry callback. LiteLLM pushes spans to OTEL_ENDPOINT (collector).
+  success_callback: ["otel"]
+  failure_callback: ["otel"]
+  # M7: enable per-tenant budgets + Lago billing callback here:
+  #   success_callback: ["lago"]
+  #   budget_ratelimiter: redis
+  request_timeout: 120
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/DATABASE_URL
+  store_model_in_db: false
+
+# Optional UI (LiteLLM admin) — served on the same :4000 port.
+litellm_settings_ui:
+  enabled: true

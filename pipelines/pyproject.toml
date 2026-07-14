@@ -1,0 +1,32 @@
+[project]
+name = "mlops-pipelines"
+version = "0.1.0"
+description = "Airflow 3.x DAGs: corpus ingest, reindex-on-change, canary eval (M3)"
+requires-python = ">=3.12"
+# Runtime deps the DAGs import. Airflow itself is provided by the runtime image
+# (docker/Dockerfile.pipelines builds apache/airflow:3.0-python3.12 + these).
+dependencies = [
+    "httpx>=0.27",
+    "psycopg[binary]>=3.2",
+]
+
+[project.optional-dependencies]
+dev = ["ruff>=0.7"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["dags"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+exclude = ["dags/__pycache__"]
+
+[tool.ruff.lint]
+# DAGs use airflow.sdk imports which aren't installed locally (runtime image provides
+# them); we don't enforce import resolution, only style/safety.
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["F401"]  # airflow decorators are used for side effects

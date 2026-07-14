@@ -1,0 +1,104 @@
+# Core services: Qdrant, Redis, Postgres, the FastAPI app, Open WebUI.
+# Profile: core
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.18.2
+    profiles: ["core"]
+    restart: unless-stopped
+    networks: [mlops-net]
+    ports: ["127.0.0.1:6333:6333", "127.0.0.1:6334:6334"]
+    environment:
+      QDRANT__LOG_LEVEL: INFO
+      QDRANT__STORAGE__OPTIMIZERS__CPU_PERCENT: "40"
+      QDRANT__SERVICE__ENABLE_STATIC_CONTENT: "0"
+    volumes:
+      - qdrant_data:/qdrant/storage:z
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:6333/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    mem_limit: 4g
+
+  redis:
+    image: redis:7.4-alpine
+    profiles: ["core"]
+    restart: unless-stopped
+    networks: [mlops-net]
+    ports: ["127.0.0.1:6379:6379"]
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  postgres:
+    image: postgres:17-alpine
+    profiles: ["core"]
+    restart: unless-stopped
+    networks: [mlops-net]
+    ports: ["127.0.0.1:5432:5432"]
+    environment:
+      TZ: UTC
+      POSTGRES_DB: ${POSTGRES_DB:-mlops}
+      POSTGRES_USER: ${POSTGRES_USER:-mlops}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-CHANGE_ME}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mlops} -d ${POSTGRES_DB:-mlops}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  app:
+    build:
+      context: ../app
+      dockerfile: ../docker/Dockerfile.app
+    profiles: ["core"]
+    restart: unless-stopped
+    networks: [mlops-net]
+    ports: ["127.0.0.1:8000:8000"]
+    env_file: ../.env
+    environment:
+      TZ: UTC
+      QDRANT_HOST: qdrant
+      QDRANT_PORT: "6333"
+      TEI_HOST: tei
+      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-mlops}:${POSTGRES_PASSWORD:-CHANGE_ME}@postgres:5432/${POSTGRES_DB:-mlops}
+      # M1: app calls Ollama directly. M3: switch LITELLM_PROXY_URL on and stop direct Ollama use.
+      OLLAMA_HOST: http://ollama:11434
+    depends_on:
+      qdrant: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      postgres: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    profiles: ["core"]
+    restart: unless-stopped
+    networks: [mlops-net]
+    ports: ["127.0.0.1:3000:8080"]
+    environment:
+      OLLAMA_BASE_URL: http://ollama:11434
+      WEBUI_AUTH: "false"
+      ENABLE_RAG_WEB_SEARCH: "false"
+    volumes:
+      - openwebui_data:/app/backend/data
+
+volumes:
+  qdrant_data:
+  redis_data:
+  postgres_data:
+  openwebui_data:

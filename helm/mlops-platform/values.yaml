@@ -1,0 +1,76 @@
+# Base values for the mlops-platform umbrella chart. Override per-env:
+#   values-kind.yaml   (local k3d/kind — M4)
+#   values-eks.yaml    (AWS EKS — M5)
+#   values-generic.yaml(any K8s — M6)
+
+# --- global ---
+nameOverride: ""
+fullnameOverride: mlops
+namespace: mlops
+
+# --- component enable flags (progressive enablement) ---
+qdrant:
+  enabled: true
+  fullnameOverride: qdrant        # service name = `qdrant` (matches app.qdrantHost)
+ingressNginx:
+  enabled: false        # local k3d uses its own Traefik/ServiceLB; enable on EKS/generic
+# Full-stack components — enable by uncommenting their dependency in Chart.yaml first.
+langfuse:    {enabled: false}
+litellm:     {enabled: false}
+airflow:     {enabled: false}
+mlflow:      {enabled: false}
+argocd:      {enabled: false}
+certManager: {enabled: false}
+externalSecrets: {enabled: false}
+
+# --- optional in-cluster model serving (else point the app at an external endpoint) ---
+ollama:
+  enabled: false
+  image: ollama/ollama:v0.30.10
+  model: qwen3:14b
+  numCtx: 8192
+  persistence: {size: 30Gi}
+  gpu: false                 # set true + nodeSelector for NVIDIA on EKS (M5)
+  resources:
+    requests: {cpu: "1", memory: "2Gi"}
+tei:
+  enabled: false
+  image: ghcr.io/huggingface/text-embeddings-inference:1.9.3
+  modelId: BAAI/bge-m3
+  persistence: {size: 10Gi}
+  gpu: false
+  resources:
+    requests: {cpu: "1", memory: "2Gi"}
+
+# --- the RAG app (local subchart charts/app) ---
+app:
+  image:
+    repository: ghcr.io/<org>/mlops-app   # set to your GHCR repo; for local k3d side-load: mlops/app
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent              # IfNotPresent for side-loaded images; Always for GHCR
+  replicaCount: 2
+  resources:
+    requests: {cpu: "200m", memory: "512Mi"}
+    limits: {cpu: "1", memory: "1Gi"}
+  # LLM + embeddings endpoints. Default to in-cluster service names; override for external.
+  ollamaHost: http://ollama:11434
+  ollamaModel: qwen3:14b
+  litellmProxyUrl: ""                     # set to http://litellm:4000 when gateway enabled
+  teiHost: tei
+  qdrantHost: qdrant                      # the qdrant subchart service
+  redisUrl: redis://redis:6379/0          # redis not bundled; provide externally (M5: Bitnami redis)
+  databaseUrl: ""                         # set via secret (app.databaseSecret) — never inline
+  corpusVersion: "1"
+  # Observability endpoints (empty = disabled, same guarded behavior as local).
+  langfuseHost: ""
+  otelExporterOtlpEndpoint: ""
+  mlflowTrackingUri: ""
+  ingress:
+    enabled: false
+    className: nginx
+    host: rag.local                        # add to /etc/hosts or use values-kind host
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 6
+    cpuAverageUtilization: 70

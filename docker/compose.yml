@@ -1,0 +1,23 @@
+# Top-level compose: pulls in modular service files via `include:` (Compose v2.20+).
+# Start profiles, e.g.:  docker compose -f docker/compose.yml --profile core,ai up -d
+# (Taskfile wraps this as `task dev:up core,ai`.)
+#
+# Pin every image — never use :latest. Bind every published port to 127.0.0.1 only
+# (these are dev services with default/no secrets; never expose them on a LAN).
+name: mlops
+
+include:
+  - path: compose.core.yml
+  - path: compose.ai.yml
+  - path: compose.gateway.yml
+  - path: compose.mlops.yml
+  - path: compose.orchestration.yml
+  - path: compose.observability.yml
+
+networks:
+  mlops-net:
+    name: mlops-net
+    driver: bridge
+
+# Named volumes are declared in the service files that own them to keep each
+# module self-contained. Compose merges them across includes.

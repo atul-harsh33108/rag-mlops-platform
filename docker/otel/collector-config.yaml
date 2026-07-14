@@ -1,0 +1,32 @@
+# OTel collector — receives OTLP/HTTP from the app + OpenLLMetry, exports to:
+#   - Langfuse /api/public/otel (HTTP, Basic Auth = public_key:secret_key) for LLM traces
+#   - (M5) Prometheus exporter for numeric metrics; Loki for logs
+#
+# NOTE: Langfuse's OTLP endpoint is HTTP only (no gRPC). Keep the otlp/http exporter.
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+      # grpc disabled — Langfuse /api/public/otel is HTTP-only
+
+exporters:
+  # Langfuse: OTLP/HTTP with Basic Auth (public_key:secret_key).
+  otlp/langfuse:
+    endpoint: http://langfuse-web:3000/api/public/otel
+    headers:
+      Authorization: "Basic ${env:LANGFUSE_BASIC_AUTH}"  # base64(public_key:secret_key), set in env
+    tls:
+      insecure: true
+    # Langfuse maps gen_ai.* attributes to its data model; keep resource attributes.
+
+  # Debug exporter for local dev (uncomment to see spans on the collector stdout).
+  # debug:
+  #   verbosity: basic
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      exporters: [otlp/langfuse]
+    # metrics/logs pipelines added at M5 (Prometheus + Loki exporters).

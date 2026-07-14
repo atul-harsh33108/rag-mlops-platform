@@ -1,0 +1,39 @@
+# env / secrets
+.env
+.env.*
+!.env.example
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+
+# node / next (ui)
+node_modules/
+.next/
+out/
+
+# terraform
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+crash.log
+
+# data / runtime
+data/corpus/*.bin
+data/corpus/*.parquet
+helm/**/charts/
+infra/**/charts/
+
+# os / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp

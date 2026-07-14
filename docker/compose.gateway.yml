@@ -1,0 +1,37 @@
+# Unified LLM gateway: LiteLLM proxy (M3). Profile: gateway.
+# Start with: `task dev:up core,ai,gateway,mlops` — the app then routes all LLM traffic
+# through LiteLLM (set LITELLM_PROXY_URL). LiteLLM logs per-call spend into the shared
+# Postgres `litellm` DB (LiteLLM_SpendLogs), the foundation for M7 billing.
+#
+# We use LiteLLM's NATIVE `otel` callback (success_callback:["otel"]) — NOT OpenLLMetry
+# on LiteLLM, which breaks for non-OpenAI providers (openllmetry issue #3167). The OTel
+# collector (compose.mlops.yml) forwards to Langfuse /api/public/otel.
+services:
+  litellm:
+    image: ghcr.io/berriai/litellm:main-stable
+    profiles: ["gateway"]
+    restart: unless-stopped
+    networks: [mlops-net]
+    ports: ["127.0.0.1:4000:4000"]   # LiteLLM proxy + UI
+    environment:
+      TZ: UTC
+      # LiteLLM reads these from config.yaml via os.environ/... substitution.
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-llm-master-CHANGE_ME}
+      DATABASE_URL: ${LITELLM_DB_URL:-postgresql://litellm:litellm@postgres:5432/litellm}
+      STORE_MODEL_IN_DB: "False"
+      # Native OTel callback -> collector -> Langfuse (HTTP, not gRPC).
+      OTEL_ENDPOINT: http://otel-collector:4318
+      OTEL_SERVICE_NAME: litellm
+      # Ollama upstream (local). M5 adds vLLM/Bedrock fallbacks in config.yaml.
+      OLLAMA_API_BASE: http://ollama:11434
+    volumes:
+      - ./litellm/config.yaml:/app/config.yaml:ro
+    command: ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "4"]
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:4000/health/liveness',timeout=5).status==200 else 1)\""]
+      interval: 20s
+      timeout: 10s
+      retries: 12
+      start_period: 40s
+    depends_on:
+      postgres: { condition: service_healthy }

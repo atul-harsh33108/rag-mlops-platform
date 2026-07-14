@@ -1,0 +1,178 @@
+# Taskfile — entrypoint for the whole platform. Install `task` (https://taskfile.dev).
+# Run `task` (no args) to list all targets. Typical flow:
+#   task dev up core ai      # start Qdrant + TEI + Ollama + Redis + app + Open WebUI
+#   task seed                # load ~500 support_faq/product_docs into Qdrant
+#   curl -N localhost:8000/chat -d '{"question":"...","tenant":"acme"}'
+#   task dev down            # tear it all down
+version: '3'
+
+vars:
+  COMPOSE: docker compose -f docker/compose.yml --env-file .env
+
+tasks:
+  default:
+    desc: List available tasks
+    cmds:
+      - task --list
+
+  # ----- local dev lifecycle -----
+  dev:up:
+    desc: "Start profiles, e.g. `task dev:up core,ai` or `task dev:up core,ai,mlops`"
+    cmds:
+      - '{{.COMPOSE}} --profile {{.CLI_ARGS | default "core,ai"}} up -d'
+
+  dev:down:
+    desc: Stop and remove all local containers
+    cmds:
+      - '{{.COMPOSE}} down'
+
+  dev:logs:
+    desc: Tail logs (service name as arg)
+    cmds:
+      - '{{.COMPOSE}} logs -f {{.CLI_ARGS}}'
+
+  dev:ps:
+    desc: Show running services
+    cmds:
+      - '{{.COMPOSE}} ps'
+
+  # ----- app / build -----
+  app:install:
+    desc: Install app Python deps via uv
+    dir: app
+    cmds:
+      - uv sync
+
+  app:run:
+    desc: Run FastAPI app directly (hot reload, without compose)
+    dir: app
+    cmds:
+      - uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+
+  app:test:
+    desc: Run app unit + integration tests
+    dir: app
+    cmds:
+      - uv run pytest -q
+
+  # ----- data / seed -----
+  seed:
+    desc: Seed ~500 support_faq + product_docs into Qdrant
+    dir: app
+    cmds:
+      - uv run python -m app.scripts.seed
+
+  ingest:full:
+    desc: Trigger the Airflow ingest_full DAG (M3) — corpus → chunk → embed → index
+    cmds:
+      - '{{.COMPOSE}} exec airflow airflow dags trigger ingest_full'
+
+  # ----- gateway / prompts / spend (M3) -----
+  gateway:up:
+    desc: Start the LiteLLM gateway profile (routes app LLM traffic through LiteLLM)
+    cmds:
+      - '{{.COMPOSE}} --profile gateway up -d litellm'
+
+  prompt:register:
+    desc: Register the RAG system prompt into MLflow + set the `production` alias (M3)
+    dir: app
+    cmds:
+      - uv run python -m app.scripts.register_prompt
+
+  prompt:reload:
+    desc: Force the running app to re-read the prompt from MLflow (alias TTL is 60s)
+    cmds:
+      - '{{.COMPOSE}} exec app curl -fsS -X POST http://localhost:8000/admin/prompt/reload || echo "endpoint optional; restart app or wait 60s"'
+
+  spend:view:
+    desc: Apply the tenant_spend_monthly view to the LiteLLM DB (run once after first boot)
+    cmds:
+      - '{{.COMPOSE}} exec -T postgres psql -U mlops -d litellm < docker/litellm/03_spend_view.sql'
+
+  spend:monthly:
+    desc: Show per-tenant monthly LLM spend from LiteLLM_SpendLogs
+    cmds:
+      - '{{.COMPOSE}} exec postgres psql -U litellm -d litellm -c "SELECT * FROM tenant_spend_monthly LIMIT 20;"'
+
+  # ----- evals -----
+  eval:pr:
+    desc: Run the PR eval gate (DeepEval faithfulness >= 0.80)
+    dir: evals
+    cmds:
+      - uv run pytest deepeval --fail-on-threshold-breach
+
+  eval:nightly:
+    desc: Run the full nightly RAGAS suite
+    dir: evals
+    cmds:
+      - uv run python ragas/runner.py --suite full
+
+  # ----- k8s (M4+) -----
+  k3d:up:
+    desc: Create a k3d cluster for daily dev (with in-cluster registry)
+    cmds:
+      - k3d cluster create mlops-dev -p "80:80@loadbalancer" --registry-create mlops-registry:5000
+
+  k3d:down:
+    desc: Delete the k3d dev cluster
+    cmds:
+      - k3d cluster delete mlops-dev
+
+  k3d:load:
+    desc: Build the app image + side-load it into the k3d registry (mlops/app:0.1.0)
+    cmds:
+      - docker build -f docker/Dockerfile.app -t mlops/app:0.1.0 app
+      - docker tag mlops/app:0.1.0 localhost:5000/mlops/app:0.1.0
+      - docker push localhost:5000/mlops/app:0.1.0
+      - k3d image import mlops/app:0.1.0 -c mlops-dev
+
+  helm:lint:
+    desc: Lint the umbrella chart
+    cmds:
+      - helm lint helm/mlops-platform
+
+  helm:template:
+    desc: Render the chart with kind values to stdout (pipe to a file to inspect)
+    cmds:
+      - helm dependency build helm/mlops-platform
+      - helm template mlops helm/mlops-platform -f helm/mlops-platform/values-kind.yaml -n mlops
+
+  helm:install:
+    desc: Install the umbrella chart on the current cluster (kind values)
+    cmds:
+      - helm dependency build helm/mlops-platform
+      - helm upgrade --install mlops helm/mlops-platform -f helm/mlops-platform/values-kind.yaml -n mlops --create-namespace
+
+  helm:diff:
+    desc: Show helm diff vs installed release
+    cmds:
+      - helm diff upgrade mlops helm/mlops-platform -f helm/mlops-platform/values-kind.yaml -n mlops
+
+  argocd:apps:
+    desc: Apply the Argo CD AppProject + Applications (replace <GIT_REPO_URL> first)
+    cmds:
+      - kubectl apply -f infra/k8s-bootstrap/argocd-apps.yaml
+
+  argocd:wait:
+    desc: Wait for all Argo CD apps to sync + health
+    cmds:
+      - argocd app wait mlops-dev --sync --health
+
+  argocd:sync:
+    desc: "Manually sync an Argo app (arg: mlops-dev|mlops-prod)"
+    cmds:
+      - argocd app sync {{.CLI_ARGS | default "mlops-prod"}}
+
+  # ----- terraform (M5) -----
+  terraform:plan:
+    desc: "terraform plan for an env (arg: dev|prod)"
+    dir: infra/terraform/envs/{{.CLI_ARGS | default "dev"}}
+    cmds:
+      - terraform init -upgrade
+      - terraform plan
+
+  terraform:apply:
+    desc: "terraform apply for an env (arg: dev|prod)"
+    dir: infra/terraform/envs/{{.CLI_ARGS | default "dev"}}
+    cmds:
+      - terraform apply

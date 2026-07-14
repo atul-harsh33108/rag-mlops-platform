@@ -1,0 +1,96 @@
+# Argo CD GitOps bootstrap (M4). Two Applications: mlops-dev (auto-sync from main) and
+# mlops-prod (manual promotion — deploy.yml bumps the image tag, a human approves sync).
+# Each renders the umbrella chart from this repo with the env values file.
+#
+# Argo renders Helm template-only — `helm list` won't show these releases, and Helm init
+# hooks (e.g. ollama-init Job) aren't deleted by `helm uninstall`; that's why every hook in
+# the chart is idempotent + uses `before-hook-creation,hook-succeeded` delete policy.
+#
+# Before applying, replace <GIT_REPO_URL> with your GitHub repo, then:
+#   kubectl apply -f infra/k8s-bootstrap/argocd-apps.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: mlops
+  namespace: argocd
+spec:
+  description: RAG MLOps platform — all envs
+  sourceRepos:
+    - <GIT_REPO_URL>          # e.g. https://github.com/<org>/mlops
+  destinations:
+    - namespace: "mlops"
+      server: https://kubernetes.default.svc
+    - namespace: "argocd"
+      server: https://kubernetes.default.svc
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: mlops-dev
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: mlops
+  source:
+    repoURL: <GIT_REPO_URL>
+    targetRevision: main
+    path: helm/mlops-platform
+    helm:
+      valueFiles:
+        - values-kind.yaml
+      parameters:
+        - name: namespace
+          value: mlops
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: mlops
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+      - ApplyOutOfSyncOnly=true
+    automated:
+      prune: true
+      selfHeal: false           # manual redeploys stay in control; drift is still pruned
+  ignoreDifferences:
+    - group: apps
+      kind: StatefulSet
+      jsonPointers:
+        - /spec/replicas        # don't fight HPA / manual scaling
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: mlops-prod
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: mlops
+  source:
+    repoURL: <GIT_REPO_URL>
+    targetRevision: main
+    path: helm/mlops-platform
+    helm:
+      valueFiles:
+        - values-eks.yaml
+      parameters:
+        - name: namespace
+          value: mlops
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: mlops
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
+      - ApplyOutOfSyncOnly=true
+    # NO automated block — prod promotes manually (deploy.yml bumps tag -> Argo detects
+    # the git change -> an operator clicks Sync, or `argocd app sync mlops-prod`).
+  ignoreDifferences:
+    - group: apps
+      kind: StatefulSet
+      jsonPointers:
+        - /spec/replicas

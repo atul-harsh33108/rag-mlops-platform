@@ -1,0 +1,71 @@
+# AI serving: Ollama (local dev) + TEI (embeddings, BGE-M3).
+# Profile: ai
+services:
+  ollama:
+    image: ollama/ollama:v0.30.10
+    profiles: ["ai"]
+    restart: unless-stopped
+    networks: [mlops-net]
+    ports: ["127.0.0.1:11434:11434"]
+    environment:
+      OLLAMA_KEEP_ALIVE: "30m"
+      OLLAMA_MAX_LOADED_MODELS: "1"
+    volumes:
+      - ollama_data:/root/.ollama
+    # GPU passthrough (WSL2 + Docker Desktop). Comment out if no NVIDIA GPU.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  # One-shot model puller — runs once, then exits. Keeps `ollama serve` image clean.
+  ollama-init:
+    image: ollama/ollama:v0.30.10
+    profiles: ["ai"]
+    networks: [mlops-net]
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["ollama pull ${OLLAMA_MODEL:-qwen3:14b}"]
+    depends_on:
+      ollama: { condition: service_healthy }
+
+  tei:
+    image: ghcr.io/huggingface/text-embeddings-inference:1.9.3
+    profiles: ["ai"]
+    restart: unless-stopped
+    networks: [mlops-net]
+    ports: ["127.0.0.1:8081:80"]
+    # BGE-M3: dense (1024) + sparse + ColBERT. ~1GB VRAM FP16.
+    command:
+      - --model-id=BAAI/bge-m3
+      - --max-batch-tokens=16384
+      - --max-concurrent-requests=128
+    volumes:
+      - tei_data:/data
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
+
+volumes:
+  ollama_data:
+  tei_data:

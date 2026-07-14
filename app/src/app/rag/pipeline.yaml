@@ -1,0 +1,11 @@
+# Retrieval pipeline config — versioned (M2: mirrored into MLflow Prompt Registry by tag).
+# These are defaults; runtime Settings can override retrieve_top_k / rerank_top_k.
+retrieve_top_k: 50        # candidates fetched from Qdrant before rerank
+rerank_top_k: 8           # final context chunks passed to the LLM
+fusion: rrf               # reciprocal rank fusion of dense + sparse(BM25)
+min_score: 0.0            # drop candidates below this rerank score
+reranker: bge-reranker-v2-m3  # served by TEI /rerank (BGE-M3 cross-encoder)
+cache:
+  enabled: true
+  distance_threshold: 0.90   # cosine; 0.88 FAQ, 0.94-0.96 legal/medical
+  key: [embedding, tenant_id, corpus_version]

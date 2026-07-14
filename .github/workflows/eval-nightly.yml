@@ -1,0 +1,59 @@
+# Nightly full eval suite — RAGAS faithfulness + answer relevancy + context precision/recall
+# + answer correctness over the full golden set. Posts a 7-day rolling quality report.
+# P50/P90/P99 are tracked (not means). A faithfulness regression >0.05 vs the prior nightly
+# baseline fails the run (M2: baseline stored as a workflow artifact / Langfuse).
+name: eval-nightly
+
+on:
+  schedule:
+    - cron: "17 3 * * *"   # 03:17 UTC daily — off the :00 mark to spread fleet load
+  workflow_dispatch:
+
+jobs:
+  nightly:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    env:
+      OLLAMA_MODEL: ${{ vars.OLLAMA_MODEL_CI || 'qwen3:1.7b' }}
+      OLLAMA_NUM_CTX: "4096"
+      POSTGRES_PASSWORD: ci
+      JUDGE_BASE_URL: http://127.0.0.1:11434/v1
+      JUDGE_MODEL: ${{ vars.OLLAMA_MODEL_CI || 'qwen3:1.7b' }}
+      JUDGE_API_KEY: dummy
+      APP_URL: http://127.0.0.1:8000
+      EVAL_TENANT: acme
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v3
+
+      - name: Bring up app stack (core+ai,mlops)
+        run: |
+          cp .env.example .env
+          docker compose -f docker/compose.yml --profile core,ai,mlops up -d --wait
+
+      - name: Wait for Ollama model
+        run: |
+          for i in $(seq 1 60); do
+            curl -sf http://127.0.0.1:11434/api/tags | grep -q "$OLLAMA_MODEL" && break
+            sleep 5
+          done
+
+      - name: Seed corpus
+        run: docker compose -f docker/compose.yml exec -T app python -m app.scripts.seed
+
+      - name: Run full RAGAS suite
+        working-directory: evals
+        run: |
+          uv sync
+          uv run python ragas/runner.py --suite nightly --app-url http://127.0.0.1:8000 | tee nightly-report.txt
+
+      - name: Upload nightly report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-nightly-report
+          path: |
+            evals/nightly-report.txt

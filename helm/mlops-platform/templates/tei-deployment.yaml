@@ -1,0 +1,75 @@
+{{- if .Values.tei.enabled }}
+# Optional in-cluster TEI (BGE-M3 embeddings). StatefulSet so the model cache persists.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: tei
+  namespace: {{ include "mlops.namespace" . }}
+  labels:
+    app.kubernetes.io/name: tei
+    app.kubernetes.io/part-of: mlops-platform
+spec:
+  serviceName: tei
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: tei
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: tei
+    spec:
+      {{- if .Values.tei.gpu }}
+      nodeSelector:
+        nvidia.com/gpu.present: "true"
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+      {{- end }}
+      containers:
+        - name: tei
+          image: {{ .Values.tei.image | quote }}
+          args:
+            - --model-id={{ .Values.tei.modelId }}
+            - --max-batch-tokens=16384
+            - --max-concurrent-requests=128
+          ports:
+            - name: http
+              containerPort: 80
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          resources:
+            {{- toYaml .Values.tei.resources | nindent 12 }}
+            {{- if .Values.tei.gpu }}
+            limits:
+              nvidia.com/gpu: 1
+            {{- end }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- with .Values.tei.persistence.storageClassName }}
+        storageClassName: {{ . }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.tei.persistence.size }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tei
+  namespace: {{ include "mlops.namespace" . }}
+  labels:
+    app.kubernetes.io/name: tei
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+  selector:
+    app.kubernetes.io/name: tei
+{{- end }}

@@ -1,0 +1,40 @@
+# values-generic.yaml — cloud-agnostic (GKE/AKS/OpenShift) (M6). No AWS-specifics; uses
+# ingress-nginx + cert-manager + Let's Encrypt. Storage is ReadWriteOnce + an S3/MinIO/GCS
+# abstraction for model weights. Filled out at M6 alongside the Next.js UI + Clerk auth.
+
+namespace: mlops
+
+qdrant:
+  enabled: true
+  persistence:
+    storageClassName: standard        # cloud default (gp2/Premium/standard)
+    size: 20Gi
+
+ingressNginx:
+  enabled: true                        # generic ingress + cert-manager + Let's Encrypt
+
+ollama:
+  enabled: false
+tei:
+  enabled: true
+  gpu: false
+  persistence:
+    storageClassName: standard
+    size: 20Gi
+
+app:
+  image:
+    repository: ghcr.io/<org>/mlops-app
+    tag: "0.1.0"
+    pullPolicy: Always
+  replicaCount: 2
+  ingress:
+    enabled: true
+    className: nginx
+    host: rag.example.com
+    tls: true                          # cert-manager issues Let's Encrypt cert
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    cpuAverageUtilization: 70

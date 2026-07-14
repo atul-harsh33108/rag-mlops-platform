@@ -1,0 +1,6 @@
+<!-- Force ClickHouse server timezone to UTC. Langfuse v3 stores traces/observations/
+     scores in ClickHouse and silently mis-reports cost/timestamps if the server TZ != UTC.
+     This drop-in config is mounted at /etc/clickhouse-server/config.d/utc.xml. -->
+<clickhouse>
+    <timezone>UTC</timezone>
+</clickhouse>

@@ -1,0 +1,64 @@
+apiVersion: v2
+name: mlops-platform
+description: |
+  Production-grade RAG MLOps platform — umbrella chart. Deploys the FastAPI RAG app +
+  Qdrant + (optionally) Ollama/TEI for embeddings + the full MLOps stack (MLflow,
+  Langfuse, LiteLLM, Airflow, Argo CD). One chart, three value files: values-kind.yaml
+  (local K8s), values-eks.yaml (AWS, M5), values-generic.yaml (any K8s, M6).
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+icon: https://qdrant.tech/img/logo.png
+maintainers:
+  - name: mlops-platform
+
+# Active remote dependencies (HTTP repos, verified resolvable). `helm dep build` pulls
+# these. The app subchart is local (charts/app) and bundled automatically — not listed here.
+dependencies:
+  - name: qdrant
+    version: 0.7.6
+    repository: https://qdrant.github.io/qdrant-helm
+    condition: qdrant.enabled
+  - name: ingress-nginx
+    version: 4.11.2
+    repository: https://kubernetes.github.io/ingress-nginx
+    condition: ingressNginx.enabled
+
+# ---------------------------------------------------------------------------
+# Full-stack dependencies — UNCOMMENT to enable the umbrella (M5+). Left commented so
+# `helm dep build` works out-of-the-box for the local K8s demo (M4 verify) without
+# pulling the heavy charts. When you enable one, run `helm dep build` again.
+#
+# GOTCHA (Aug 2025): Bitnami moved FREE charts/images off charts.bitnami.com to OCI at
+# oci://registry-1.docker.io/bitnamicharts and the legacy `bitnami/*` images to
+# `bitnamilegacy/*`. For Bitnami charts below, pin `image.repository=bitnamilegacy/...`
+# in the matching values file, or use the OCI chart directly.
+# ---------------------------------------------------------------------------
+#  - name: langfuse
+#    version: 1.5.38
+#    repository: https://langfuse.github.io/langfuse-k8s
+#    condition: langfuse.enabled
+#  - name: litellm
+#    version: 0.1.0
+#    repository: https://berriai.github.io/litellm/
+#    condition: litellm.enabled
+#  - name: airflow
+#    version: 1.13.1
+#    repository: https://airflow.apache.org    # ASF official chart (not Bitnami)
+#    condition: airflow.enabled
+#  - name: mlflow
+#    version: 5.1.16
+#    repository: oci://registry-1.docker.io/bitnamicharts   # Bitnami OCI (post Aug-2025)
+#    condition: mlflow.enabled
+#  - name: argo-cd
+#    version: 9.5.0
+#    repository: https://argoproj.github.io/argo-helm
+#    condition: argocd.enabled
+#  - name: cert-manager
+#    version: 1.16.x
+#    repository: https://charts.jetstack.io
+#    condition: certManager.enabled
+#  - name: external-secrets
+#    version: 0.13.x
+#    repository: https://charts.external-secrets.io
+#    condition: externalSecrets.enabled

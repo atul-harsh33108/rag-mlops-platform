@@ -1,0 +1,73 @@
+# PR eval gate — runs DeepEval faithfulness+relevancy on golden_dataset.jsonl whenever
+# retrieval, prompts, or pipeline config changes. Fails the PR on regression.
+#
+# CI uses a SMALL model (OLLAMA_MODEL_CI) so it runs on CPU GitHub-hosted runners.
+# Prod/dev can use qwen3:14b locally; the gate threshold is the same.
+name: eval-pr
+
+on:
+  pull_request:
+    paths:
+      - "app/src/app/rag/**"
+      - "app/src/app/clients/**"
+      - "app/src/app/qdrant/**"
+      - "app/src/app/api/chat.py"
+      - "app/src/app/scripts/seed_corpus.py"
+      - "evals/**"
+      - ".github/workflows/eval-pr.yml"
+
+jobs:
+  eval:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    env:
+      # CI-sized model — fast on CPU. Override via repository variable if you have a GPU runner.
+      OLLAMA_MODEL: ${{ vars.OLLAMA_MODEL_CI || 'qwen3:1.7b' }}
+      OLLAMA_NUM_CTX: "4096"
+      POSTGRES_PASSWORD: ci
+      OPENAI_BASE_URL: http://127.0.0.1:11434/v1
+      OPENAI_API_KEY: dummy
+      JUDGE_MODEL: ${{ vars.OLLAMA_MODEL_CI || 'qwen3:1.7b' }}
+      APP_URL: http://127.0.0.1:8000
+      EVAL_TENANT: acme
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Bring up app stack (core+ai)
+        working-directory: .
+        run: |
+          cp .env.example .env
+          docker compose -f docker/compose.yml --profile core,ai up -d --wait
+          docker compose -f docker/compose.yml ps
+
+      - name: Wait for Ollama model
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:11434/api/tags | grep -q "$OLLAMA_MODEL"; then break; fi
+            sleep 5
+          done
+          curl -sS http://127.0.0.1:11434/api/tags
+
+      - name: Seed corpus
+        run: docker compose -f docker/compose.yml exec -T app python -m app.scripts.seed
+
+      - name: Run DeepEval gate
+        working-directory: evals
+        run: |
+          uv sync
+          uv run pytest deepeval --fail-on-threshold-breach -v
+
+      - name: Upload eval report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-pr-report
+          path: evals/**/results*

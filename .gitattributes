@@ -1,0 +1,10 @@
+# Normalize line endings — Helm charts and shell scripts break with CRLF on Windows/WSL2.
+* text=auto eol=lf
+
+# Binary files — never touch.
+*.png binary
+*.jpg binary
+*.pdf binary
+*.bin binary
+*.safetensors binary
+*.gguf binary

@@ -1,0 +1,66 @@
+# values-kind.yaml — local k3d/kind (M4). Goals: one `helm install` brings up the RAG
+# app + Qdrant on local K8s, side-loaded images (no registry push needed for dev),
+# local-path storage (k3d/kind ship local-path as the default StorageClass).
+#
+# Install:
+#   task k3d:up                      # create the k3d cluster + registry
+#   task k3d:load                    # build + side-load mlops/app:0.1.0 into k3d
+#   task helm:install                # helm upgrade --install -f values-kind.yaml
+#   task argocd:wait                 # (if Argo CD enabled) wait for sync+health
+
+namespace: mlops
+
+qdrant:
+  enabled: true
+  fullnameOverride: qdrant
+  # k3d/kind provide local-path storage — the qdrant chart uses it by default.
+  persistence:
+    enabled: true
+    storageClassName: local-path
+    size: 5Gi
+
+ingressNginx:
+  enabled: false          # k3d ships Traefik; use a NodePort / port-forward for the demo
+
+# Local K8s demo runs the model servers in-cluster on CPU (slow but self-contained).
+# For a snappier demo, disable these and point app.ollamaHost/teiHost at the compose
+# stack on the host (http://host.docker.internal:11434 / :8081) — see runbook.
+ollama:
+  enabled: true
+  model: qwen3:1.7b        # small model for CPU; switch to qwen3:14b on a GPU node
+  numCtx: 4096
+  gpu: false
+  persistence:
+    storageClassName: local-path
+    size: 20Gi
+  resources:
+    requests: {cpu: "1500m", memory: "3Gi"}
+    limits: {cpu: "2", memory: "4Gi"}
+
+tei:
+  enabled: true
+  gpu: false               # BGE-M3 on CPU; first pull downloads ~2GB from HF
+  persistence:
+    storageClassName: local-path
+    size: 10Gi
+  resources:
+    requests: {cpu: "1000m", memory: "2Gi"}
+
+app:
+  image:
+    repository: mlops/app           # side-loaded into k3d via `task k3d:load`
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent         # critical for side-loaded images
+  replicaCount: 1                    # one replica is fine for the local demo
+  resources:
+    requests: {cpu: "200m", memory: "384Mi"}
+    limits: {cpu: "1", memory: "768Mi"}
+  ollamaHost: http://ollama:11434
+  ollamaModel: qwen3:1.7b
+  teiHost: tei
+  qdrantHost: qdrant
+  databaseUrl: postgresql+psycopg://mlops:CHANGE_ME@postgres:5432/mlops
+  ingress:
+    enabled: false
+  autoscaling:
+    enabled: false
